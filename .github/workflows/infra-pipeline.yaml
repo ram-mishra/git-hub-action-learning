@@ -24,7 +24,13 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          creds: |
+            {
+              "clientId": "${{ secrets.CLIENTID }}",
+              "clientSecret": "${{ secrets.CLIENTSECRET }}",
+              "subscriptionId": "${{ secrets.SUBSCRIPTIONID }}",
+              "tenantId": "${{ secrets.TENANTID }}"
+            }
 
       # 4. Initialize Terraform
       - name: Terraform Init
