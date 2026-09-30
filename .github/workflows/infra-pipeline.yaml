@@ -9,8 +9,8 @@ jobs:
   terraform:
     name: Terraform Deploy
   #  runs-on: ubuntu-latest
-    runs-on: mishra-runner
-
+  #  runs-on: mishra-runner
+    runs-on: self-hosted
     steps:
 
       # 1. Download repository code
