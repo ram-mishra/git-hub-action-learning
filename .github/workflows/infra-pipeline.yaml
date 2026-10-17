@@ -1,9 +1,28 @@
+# Workflow name displayed in the GitHub Actions tab
 name: Azure Infrastructure Deployment
 
+# Trigger configuration
 on:
-  push:
-    branches:
-      - main
+  # Allows the user to start the workflow manually
+  workflow_dispatch:
+    inputs:
+      # Input parameter used to select the deployment environment
+      environment:
+        description: "Select environment to deploy"
+
+        # User must select an environment
+        required: true
+
+        # Display a dropdown list in the Run workflow menu
+        type: choice
+
+        # Available environment options
+        options:
+          - dev
+          - test
+          - prod
+
+# Define the jobs executed by this workflow
 
 jobs:
   terraform:
