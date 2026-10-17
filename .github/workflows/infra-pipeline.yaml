@@ -1,46 +1,40 @@
+
 # Workflow name displayed in the GitHub Actions tab
 name: Azure Infrastructure Deployment
 
-# Trigger configuration
+# Allow the user to select an environment manually
 on:
-  # Allows the user to start the workflow manually
   workflow_dispatch:
     inputs:
-      # Input parameter used to select the deployment environment
       environment:
         description: "Select environment to deploy"
-
-        # User must select an environment
         required: true
-
-        # Display a dropdown list in the Run workflow menu
         type: choice
-
-        # Available environment options
         options:
           - dev
           - test
           - prod
 
-# Define the jobs executed by this workflow
-
+# Define all pipeline jobs
 jobs:
-  terraform:
-    name: Terraform Deploy
-  #  runs-on: ubuntu-latest
-  #  runs-on: mishra-runner
-    runs-on: self-hosted
-    steps:
 
-      # 1. Download repository code
+  # ==================================================
+  # JOB 1: TERRAFORM INIT
+  # ==================================================
+  init:
+    name: Terraform Init
+    runs-on: self-hosted
+
+    steps:
+      # Download repository code
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Install Terraform
+      # Install Terraform CLI
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # 3. Login to Azure
+      # Authenticate with Azure using service principal credentials
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -52,22 +46,131 @@ jobs:
               "tenantId": "${{ secrets.TENANTID }}"
             }
 
-      # 4. Initialize Terraform
+      # Initialize Terraform and configure the backend
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init
+        run: terraform init -input=false
 
-      # 5. Validate Terraform
+  # ==================================================
+  # JOB 2: TERRAFORM PLAN
+  # Runs only after Init succeeds
+  # ==================================================
+  plan:
+    name: Terraform Plan
+    runs-on: self-hosted
+    needs: init
+
+    steps:
+      # Every job starts with its own workspace
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # Authenticate with Azure again in this separate job
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.CLIENTID }}",
+              "clientSecret": "${{ secrets.CLIENTSECRET }}",
+              "subscriptionId": "${{ secrets.SUBSCRIPTIONID }}",
+              "tenantId": "${{ secrets.TENANTID }}"
+            }
+
+      # Initialize this job's Terraform working directory
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init -input=false
+
+      # Validate Terraform configuration
       - name: Terraform Validate
         working-directory: terraform
         run: terraform validate
 
-      # 6. Create execution plan
+      # Generate a plan using the selected environment's variables
       - name: Terraform Plan
         working-directory: terraform
-        run: terraform plan
+        run: |
+          terraform plan \
+            -input=false \
+            -var-file="${{ inputs.environment }}.tfvars" \
+            -out=tfplan
 
-      # 7. Deploy infrastructure
+      # Save the plan so later jobs can download the exact same plan
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          if-no-files-found: error
+          retention-days: 1
+
+  # ==================================================
+  # JOB 3: MANUAL VALIDATION
+  # Wait for a reviewer before continuing
+  # ==================================================
+  manual_validation:
+    name: Manual Validation
+    runs-on: self-hosted
+    needs: plan
+
+    # Configure required reviewers for this GitHub Environment
+    # in Settings -> Environments.
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      # This step runs after any required approval is granted
+      - name: Deployment Approved
+        run: echo "Approved for ${{ inputs.environment }} deployment"
+
+  # ==================================================
+  # JOB 4: TERRAFORM APPLY
+  # Runs only after manual validation succeeds
+  # ==================================================
+  apply:
+    name: Terraform Apply
+    runs-on: self-hosted
+    needs: manual_validation
+
+    steps:
+      # Download repository code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # Authenticate with Azure
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.CLIENTID }}",
+              "clientSecret": "${{ secrets.CLIENTSECRET }}",
+              "subscriptionId": "${{ secrets.SUBSCRIPTIONID }}",
+              "tenantId": "${{ secrets.TENANTID }}"
+            }
+
+      # Initialize Terraform before applying the saved plan
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init -input=false
+
+      # Download the exact plan generated by the Plan job
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform
+
+      # Apply the reviewed plan; do not generate a new plan here
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve  
+        run: terraform apply -input=false -auto-approve tfplan
